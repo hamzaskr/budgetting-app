@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { allocationTarget, budgetPercent, budgetSpent } from '../js/domain/planning.js';
+import { allocationTarget, allocationIsDue, allocationNextDue, budgetPercent, budgetSpent } from '../js/domain/planning.js';
 
 const transactions = [
   { type: 'expense', amount: 1200, category: 'Food', occurredAt: '2026-11-02T00:00:00.000Z' },
@@ -20,4 +20,12 @@ test('allocation targets handle fixed and percentage modes safely', () => {
   assert.equal(allocationTarget({ amount: 5000 }, 100000), 5000);
   assert.equal(allocationTarget({ percent: 15 }, 100000), 15000);
   assert.equal(allocationTarget({ percent: 0 }, 100000), 0);
+});
+
+test('allocation schedules calculate daily and weekly due dates', () => {
+  const now = new Date('2026-11-05T12:00:00.000Z');
+  assert.equal(allocationNextDue({ frequency: 'daily', startDate: '2026-11-04' }, now).slice(0, 10), '2026-11-05');
+  assert.equal(allocationNextDue({ frequency: 'weekly', startDate: '2026-10-29' }, now).slice(0, 10), '2026-11-05');
+  assert.equal(allocationIsDue({ nextDueAt: '2026-11-05T00:00:00.000Z' }, now), true);
+  assert.equal(allocationIsDue({ nextDueAt: '2026-11-06T00:00:00.000Z' }, now), false);
 });

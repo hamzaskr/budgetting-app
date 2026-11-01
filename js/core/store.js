@@ -1,6 +1,7 @@
 import { emptyState, loadState, STORAGE_KEY } from './state.js';
 import { sourceBalance } from '../domain/ledger.js';
 import { generateMissingSnapshots } from '../domain/snapshots.js';
+import { allocationNextDue } from '../domain/planning.js';
 export function createStore() {
   let state = loadState(); state.recurring ??= []; state.templates ??= []; state.snapshots ??= []; state.settings.baseCurrency ??= 'PKR'; state.settings.displayCurrency ??= state.settings.currency ?? 'PKR'; state.settings.automaticRates ??= true; state.settings.fxRates ??= null; const listeners = new Set();
   function persist(next) { generateMissingSnapshots(next); const saved = { ...next, metadata: { ...next.metadata, updatedAt: new Date().toISOString(), revision: state.metadata.revision + 1 } }; localStorage.setItem(STORAGE_KEY, JSON.stringify(saved)); state = saved; listeners.forEach(fn => fn(state)); return state; }
@@ -15,7 +16,29 @@ export function createStore() {
   function addCategory(name) { if (!name?.trim()) throw new Error('Enter a category name.'); return update(s => s.categories.push({ id: crypto.randomUUID(), name: name.trim(), archived: false })); }
   function archiveCategory(id) { return update(s => { const category = s.categories.find(item => item.id === id); if (category) category.archived = true; }); }
   function contributeGoal(goalId, amount) { if (!amount || !Number.isSafeInteger(amount) || amount <= 0) throw new Error('Enter a positive contribution.'); return update(s => { const goal = s.goals.find(item => item.id === goalId); if (!goal) throw new Error('Goal not found.'); goal.current += amount; goal.movements ??= []; goal.movements.push({ id: crypto.randomUUID(), amount, type: 'contribution', occurredAt: new Date().toISOString() }); }); }
-  function addAllocation(input) { if (!input.name?.trim() || !['virtual', 'physical'].includes(input.mode || 'virtual') || (input.percent == null && input.amount == null) || (input.percent != null && (!Number.isFinite(input.percent) || input.percent <= 0 || input.percent > 100)) || (input.amount != null && (!Number.isSafeInteger(input.amount) || input.amount <= 0))) throw new Error('Enter a name and a valid allocation target.'); return update(s => s.allocations.push({ id: crypto.randomUUID(), ...input, name: input.name.trim(), mode: input.mode || 'virtual', createdAt: new Date().toISOString() })); }
+  function validateAllocation(input) { const start = input.startDate ? new Date(`${input.startDate}T00:00:00Z`) : null; if (!input.name?.trim() || !['virtual', 'physical'].includes(input.mode || 'virtual') || (input.percent == null && input.amount == null) || (input.percent != null && (!Number.isFinite(input.percent) || input.percent <= 0 || input.percent > 100)) || (input.amount != null && (!Number.isSafeInteger(input.amount) || input.amount <= 0)) || !['daily', 'weekly'].includes(input.frequency) || !['manual', 'automatic'].includes(input.confirmationMode || 'manual') || (input.confirmationMode === 'automatic' && input.mode !== 'physical') || (input.mode === 'physical' && !input.sourceId) || !/^\d{4}-\d{2}-\d{2}$/.test(input.startDate || '') || !start || Number.isNaN(start.getTime()) || start.toISOString().slice(0, 10) !== input.startDate) throw new Error('Enter a name, valid allocation target, source, and recurrence schedule.'); }
+  function addAllocation(input) { validateAllocation(input); return update(s => s.allocations.push({ id: crypto.randomUUID(), ...input, name: input.name.trim(), mode: input.mode || 'virtual', confirmationMode: input.confirmationMode || 'manual', nextDueAt: `${input.startDate}T00:00:00Z`, lastNotifiedAt: null, createdAt: new Date().toISOString() })); }
+  function editAllocation(id, input) { validateAllocation(input); return update(s => { const index = s.allocations.findIndex(item => item.id === id); if (index < 0) throw new Error('Allocation not found.'); const original = s.allocations[index]; s.allocations[index] = { ...original, ...input, id, name: input.name.trim(), mode: input.mode || 'virtual', confirmationMode: input.confirmationMode || 'manual', nextDueAt: `${input.startDate}T00:00:00Z`, lastNotifiedAt: null, createdAt: original.createdAt ?? new Date().toISOString() }; }); }
+  function markAllocationNotified(id) { return update(s => { const allocation = s.allocations.find(item => item.id === id); if (!allocation) throw new Error('Allocation not found.'); allocation.lastNotifiedAt = allocation.nextDueAt; }); }
+  function confirmAllocation(id, amount, sourceId = null, now = new Date()) {
+    if (!Number.isSafeInteger(amount) || amount <= 0) throw new Error('Enter a valid allocation amount.');
+    return update(s => {
+      const allocation = s.allocations.find(item => item.id === id);
+      if (!allocation) throw new Error('Allocation not found.');
+      if (!allocation.nextDueAt || new Date(allocation.nextDueAt) > now) throw new Error('This allocation is not due yet.');
+      let source = null;
+      if (allocation.mode === 'physical') {
+        source = s.sources.find(item => item.id === (sourceId || allocation.sourceId) && !item.archived);
+        if (!source) throw new Error('Choose an active source for this physical allocation.');
+        if (sourceBalance(s, source.id) < amount) throw new Error('Insufficient funds for this allocation.');
+        s.transactions.push({ id: crypto.randomUUID(), type: 'expense', amount, originalAmountMinor: amount, originalCurrency: s.settings.baseCurrency, baseAmountMinor: amount, baseCurrency: s.settings.baseCurrency, fxRate: 1, fxProvider: 'base currency', fxRateDate: null, convertedAt: now.toISOString(), actualSettledAmountMinor: null, sourceId: source.id, destinationId: null, category: null, note: `Allocation: ${allocation.name}`, occurredAt: now.toISOString(), createdAt: now.toISOString() });
+      }
+      s.allocationMovements.push({ id: crypto.randomUUID(), allocationId: id, amount, type: 'contribution', occurredAt: now.toISOString(), sourceId: source?.id ?? null });
+      allocation.lastNotifiedAt = now.toISOString();
+      const nextDay = new Date(now); nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+      allocation.nextDueAt = allocationNextDue(allocation, nextDay);
+    });
+  }
   function addRecurring(input) { if (!input.name || !input.amount || !input.sourceId) throw new Error('Enter a reminder name, amount, and source.'); return update(s => s.recurring.push({ id: crypto.randomUUID(), ...input, active: true, createdAt: new Date().toISOString() })); }
   function addTemplate(input) { if (!input.name || !input.amount || !input.sourceId) throw new Error('Enter a template name, amount, and source.'); return update(s => s.templates.push({ id: crypto.randomUUID(), ...input, createdAt: new Date().toISOString() })); }
   function removeRecurring(id) { return update(s => { s.recurring = s.recurring.filter(item => item.id !== id); }); }
@@ -44,5 +67,5 @@ export function createStore() {
   function removeTransaction(id) { return update(s => { s.transactions = s.transactions.filter(tx => tx.id !== id); }); }
   function reset() { const next = emptyState(); localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); state = next; listeners.forEach(fn => fn(state)); }
   window.addEventListener('storage', event => { if (event.key === STORAGE_KEY && event.newValue) { try { const incoming = JSON.parse(event.newValue); if (incoming.metadata.revision > state.metadata.revision) { state = incoming; listeners.forEach(fn => fn(state)); } } catch { /* preserve current valid state */ } } });
-  return { get state() { return state; }, subscribe, update, addSource, addTransaction, editTransaction, reconcile, archiveSource, updateSettings, addCategory, archiveCategory, contributeGoal, addAllocation, recordAllocationMovement, addRecurring, addTemplate, removeRecurring, removeTemplate, importState, removeTransaction, reset };
+  return { get state() { return state; }, subscribe, update, addSource, addTransaction, editTransaction, reconcile, archiveSource, updateSettings, addCategory, archiveCategory, contributeGoal, addAllocation, editAllocation, markAllocationNotified, confirmAllocation, recordAllocationMovement, addRecurring, addTemplate, removeRecurring, removeTemplate, importState, removeTransaction, reset };
 }

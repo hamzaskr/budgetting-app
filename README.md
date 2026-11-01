@@ -27,7 +27,7 @@ The app is installable from supported mobile browsers and caches its static appl
 - Overview, activity, source details, goals, budgets, allocations, settings, and reports
 - JSON backup/restore and spreadsheet-safe transaction CSV export
 - Category management, default source preferences, archiving, and goal contributions
-- Activity search/filter/editing, spending calendar, monthly snapshots, reminders, and reusable templates
+- Activity search/filter/editing, spending calendar, monthly snapshots, recurring daily or weekly allocation reminders with due notifications, per-occurrence spending confirmation, optional automatic physical-source deductions, and reusable templates
 - Custom accessible dropdown menus with contextual hover guidance and live thousands-separated amount entry
 - Adaptive navigation: collapsible desktop sidebar, compact laptop rail, and bottom navigation for tablet and mobile
 - Icon-led navigation with accessible labels, responsive sheets, and viewport-safe dropdown menus
@@ -46,4 +46,4 @@ Run `npm test` for the full deterministic regression suite, `npm run test:covera
 
 Use **Settings → Data** to export a complete JSON backup or a transaction CSV. JSON import validates the schema before replacing local state and asks for confirmation. Reset requires explicit confirmation. No bank or wallet credentials are collected, and no external synchronization is attempted.
 
-Reports intentionally distinguish recorded activity from external digital activity that has not been entered individually. Reminders and templates never post a transaction without explicit confirmation.
+Reports intentionally distinguish recorded activity from external digital activity that has not been entered individually. Reminders and templates never post a transaction without explicit confirmation. Allocation schedules notify in the app when due; virtual allocations require a per-occurrence confirmation, while physical allocations may either require confirmation or automatically post an expense against the selected source. Browser notifications are used when permission has already been granted.
